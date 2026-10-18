@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -145,7 +146,11 @@ def run_automation():
         print("⚠️  DRY_RUN is enabled. No actual emails will be sent.\n")
 
     # Search for unread emails from naukri
-    query = 'from:naukri.com is:unread'
+    # Restrict search to today and yesterday (-1 day)
+    since_date = (datetime.now() - timedelta(days=1)).strftime('%Y/%m/%d')
+    query = f'from:naukri.com is:unread after:{since_date}'
+    
+    print(f"Searching unread emails received since {since_date} (today and yesterday)...")
     results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
 

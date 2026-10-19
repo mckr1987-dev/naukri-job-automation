@@ -5,3 +5,5 @@ credentials.json
 token.json 
 resume.pdf 
 *.log
+linkedin_state.json 
+applied_jobs.json 

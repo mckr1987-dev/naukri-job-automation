@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import requests
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -15,18 +16,44 @@ from googleapiclient.discovery import build
 from google import genai
 from google.genai import types
 
+# -------------------------------------------------------------------
+# Configuration & Environment Variables
+# -------------------------------------------------------------------
 load_dotenv()
 
-# Configuration from .env
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RESUME_PATH = os.getenv("RESUME_PATH", "resume.pdf")
 MATCH_THRESHOLD = int(os.getenv("MATCH_THRESHOLD", 85))
 DRY_RUN = os.getenv("DRY_RUN", "False").lower() in ("true", "1", "yes")
 
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
 SCOPES = ['https://mail.google.com/']
 
-# Initialize Gemini Client
+# Initialize Gemini AI Client
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def send_telegram(message: str):
+    """Sends a notification directly to your Telegram chat."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ Telegram token or chat ID is missing in .env")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        data = res.json()
+        if data.get("ok"):
+            print("✓ Telegram notification sent successfully.")
+        else:
+            print(f"✗ Telegram API Error: {data.get('description')}")
+    except Exception as e:
+        print(f"✗ Failed to send Telegram message: {e}")
 
 
 def get_gmail_service():
@@ -57,7 +84,7 @@ def extract_resume_text(pdf_path: str) -> str:
 
 
 def extract_email_body(payload: dict) -> str:
-    """Recursively decodes the text body of an email."""
+    """Recursively decodes the body of an email."""
     body = ""
     if 'parts' in payload:
         for part in payload['parts']:
@@ -76,7 +103,7 @@ def extract_email_body(payload: dict) -> str:
 
 
 def evaluate_job_match(email_content: str, resume_text: str) -> dict:
-    """Analyzes JD fit and drafts an application response using Gemini."""
+    """Uses Gemini 3.8 Flash to evaluate match score and draft the application."""
     prompt = f"""
 You are a senior recruitment partner helping an Enterprise Integration & AI Architect evaluate inbound recruiter emails.
 
@@ -145,20 +172,24 @@ def run_automation():
     if DRY_RUN:
         print("⚠️  DRY_RUN is enabled. No actual emails will be sent.\n")
 
-    # Search for unread emails from naukri
     # Restrict search to today and yesterday (-1 day)
     since_date = (datetime.now() - timedelta(days=1)).strftime('%Y/%m/%d')
     query = f'from:naukri.com is:unread after:{since_date}'
-    
+
     print(f"Searching unread emails received since {since_date} (today and yesterday)...")
     results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
 
+    # If no emails exist at all, send alert and exit
     if not messages:
         print("No unread emails from Naukri found.")
+        send_telegram(f"ℹ️ Naukri Scan: No unread emails found since {since_date}.")
         return
 
     print(f"Found {len(messages)} unread email(s) from Naukri.\n" + "=" * 50)
+
+    evaluated_count = 0
+    applied_count = 0
 
     for item in messages:
         msg = service.users().messages().get(userId='me', id=item['id'], format='full').execute()
@@ -169,7 +200,7 @@ def run_automation():
         subject = headers.get('subject', 'Job Application')
         thread_id = msg['threadId']
 
-        # Skip transactional/alert emails
+        # Skip transactional/alert emails that cannot be replied to
         if any(unwanted in reply_to.lower() for unwanted in ["noreply", "alerts@", "mailer@naukri.com"]):
             print(f"Skipping generic alert email from: {reply_to}\nSubject: {subject}\n")
             continue
@@ -179,6 +210,7 @@ def run_automation():
             print(f"Skipping email (insufficient content to parse). Subject: {subject}\n")
             continue
 
+        evaluated_count += 1
         print(f"Analyzing recruiter email from: {reply_to}")
         print(f"Subject: {subject}")
 
@@ -190,13 +222,11 @@ def run_automation():
             print(f"→ Match Score: {score}% | {reason}")
 
             if score >= MATCH_THRESHOLD:
-                print(f"★ Strong Match (>= {MATCH_THRESHOLD}%). Prepared Reply Body:\n")
-                print(eval_result.get("reply_body"))
-                print("-" * 40)
+                applied_count += 1
+                status_label = "DRY RUN (Simulated)" if DRY_RUN else "Application Sent"
+                print(f"★ Strong Match (>= {MATCH_THRESHOLD}%).")
 
-                if DRY_RUN:
-                    print("→ [DRY RUN] Would send reply and attach resume.pdf.")
-                else:
+                if not DRY_RUN:
                     send_reply_with_resume(service, item['id'], thread_id, reply_to, subject, eval_result.get("reply_body"))
                     print(f"✓ Reply and resume sent successfully to {reply_to}!")
 
@@ -206,6 +236,19 @@ def run_automation():
                         id=item['id'],
                         body={'removeLabelIds': ['UNREAD']}
                     ).execute()
+
+                # Telegram alert for the matched role
+                action_text = "Resume attached & application delivered." if not DRY_RUN else "DRY_RUN is active. No email sent."
+                tg_alert = (
+                    f"🎯 Naukri Job Matched ({score}%)\n\n"
+                    f"• Status: {status_label}\n"
+                    f"• Recruiter: {reply_to}\n"
+                    f"• Subject: {subject}\n"
+                    f"• Analysis: {reason}\n\n"
+                    f"📄 {action_text}"
+                )
+                send_telegram(tg_alert)
+
             else:
                 print(f"✗ Score below threshold ({score}% < {MATCH_THRESHOLD}%). No reply sent.")
 
@@ -213,6 +256,16 @@ def run_automation():
             print(f"Error evaluating email: {e}")
 
         print("=" * 50)
+
+    # Always send scan summary to Telegram so you know the scheduler completed
+    summary_msg = (
+        f"📊 Naukri Scan Summary\n\n"
+        f"• Total Unread Found: {len(messages)}\n"
+        f"• Recruiter Emails Evaluated: {evaluated_count}\n"
+        f"• Applications Sent: {applied_count}\n"
+        f"• Automated Alerts Skipped: {len(messages) - evaluated_count}"
+    )
+    send_telegram(summary_msg)
 
 
 if __name__ == "__main__":

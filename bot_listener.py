@@ -3,8 +3,7 @@ import time
 import requests
 from dotenv import load_dotenv
 
-from naukri_auto_apply import run_automation as run_naukri_scan, send_telegram
-from linkedin_auto_apply import run_linkedin_automation
+from naukri_auto_apply import run_automation, send_telegram
 
 load_dotenv()
 
@@ -31,50 +30,29 @@ def get_updates(offset=None):
 def handle_command(text: str):
     cmd = text.strip().lower()
 
-    if cmd in ["/naukri", "naukri"]:
-        send_telegram("⏳ Starting *Naukri* Gmail scan...")
+    if cmd in ["/scan", "/run", "scan", "run"]:
+        send_telegram("⏳ *Trigger received!* Scanning Gmail now...")
+        print("\n[Telegram Trigger] Scanning Gmail for recruiter emails...")
         try:
-            run_naukri_scan()
+            run_automation()
         except Exception as e:
-            send_telegram(f"❌ Error during Naukri scan: {e}")
-
-    elif cmd in ["/linkedin", "linkedin"]:
-        send_telegram("⏳ Starting *LinkedIn* Easy Apply scan...")
-        try:
-            # Runs headless in background
-            run_linkedin_automation(headless=True)
-        except Exception as e:
-            send_telegram(f"❌ Error during LinkedIn scan: {e}")
-
-    elif cmd in ["/scan", "/run", "scan", "run", "/all"]:
-        send_telegram("⏳ Running full scan (*Naukri + LinkedIn*)...")
-        try:
-            print("[Trigger] Running Naukri...")
-            run_naukri_scan()
-            print("[Trigger] Running LinkedIn...")
-            run_linkedin_automation(headless=True)
-        except Exception as e:
-            send_telegram(f"❌ Error during full scan: {e}")
+            send_telegram(f"❌ Error during scan: {e}")
 
     elif cmd in ["/status", "status"]:
         status_msg = (
-            f"🤖 *Career Bot Status: ONLINE*\n\n"
+            f"🤖 *Career Bot Status: ONLINE (Gmail Mode)*\n\n"
             f"• *Threshold:* {MATCH_THRESHOLD}%\n"
-            f"• *Dry Run:* {DRY_RUN}\n\n"
-            f"Available Triggers:\n"
-            f"• `/naukri` - Scan Naukri emails\n"
-            f"• `/linkedin` - Scan LinkedIn Easy Apply\n"
-            f"• `/scan` - Scan both platforms"
+            f"• *Dry Run:* {DRY_RUN}\n"
+            f"• *Engine:* Gmail API + Gemini 3.8 Flash\n\n"
+            f"Send `/scan` anytime to trigger an immediate check."
         )
         send_telegram(status_msg)
 
     elif cmd in ["/help", "help", "/start"]:
         help_msg = (
-            f"📋 *Available Commands:*\n\n"
-            f"• `/scan` - Run full scan (Naukri + LinkedIn)\n"
-            f"• `/naukri` - Check Naukri recruiter reach-outs\n"
-            f"• `/linkedin` - Check LinkedIn Easy Apply jobs\n"
-            f"• `/status` - Show active configuration\n"
+            f"📋 *Bot Commands:*\n\n"
+            f"• `/scan` - Scan Gmail and auto-reply to recruiters\n"
+            f"• `/status` - Check current settings\n"
             f"• `/help` - Show this menu"
         )
         send_telegram(help_msg)
@@ -82,11 +60,11 @@ def handle_command(text: str):
 
 def start_listener():
     print("=" * 55)
-    print("🤖 Unified Career Bot Listener is active...")
-    print("Supports: /naukri, /linkedin, /scan, /status")
+    print("🤖 Gmail Recruitment Bot Listener is active...")
+    print("Supports: /scan, /status, /help")
     print("=" * 55)
 
-    send_telegram("🟢 *Unified Bot Online!*\nSupports: `/naukri`, `/linkedin`, and `/scan`")
+    send_telegram("🟢 *Gmail Recruitment Bot Online!*\nSend `/scan` anytime to check your inbox.")
 
     offset = None
     while True:
